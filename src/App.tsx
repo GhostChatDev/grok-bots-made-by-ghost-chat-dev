@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { decide, dayStats, type SkillId } from "./rules";
-import { api, fmtAgo, fmtPct, fmtPrice, fmtSol, fmtTime, openPnl, sparkPoints, type DeskState } from "./desk";
+import { api, isDemo, fmtAgo, fmtPct, fmtPrice, fmtSol, fmtTime, openPnl, sparkPoints, type DeskState } from "./desk";
 
 export default function App() {
   const [s, setS] = useState<DeskState | null>(null);
@@ -50,7 +50,9 @@ export default function App() {
         ))}
       </nav>
       {err && <p className="banner error" role="alert">Connection lost: {err}. Showing the last data.</p>}
-      {simulated && <p className="banner warn">Simulated prices: the live PumpPortal feed is quiet, so made-up tokens are shown. They are never traded live.</p>}
+      {isDemo()
+        ? <p className="banner warn">Demo mode: no server here, so simulated tokens run in your browser and only paper-trade. Your trades and notes are saved on this device.</p>
+        : simulated && <p className="banner warn">Simulated prices: the live PumpPortal feed is quiet, so made-up tokens are shown. They are never traded live.</p>}
 
       {tab === "desk" && <section className="stats" aria-label="Today">
         <div className="card stat"><span className="muted">P&L today</span><b className={stats.pnlSol >= 0 ? "up" : "down"}>{fmtSol(stats.pnlSol)}</b></div>

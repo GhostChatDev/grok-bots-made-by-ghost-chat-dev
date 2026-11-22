@@ -1,5 +1,6 @@
 // Browser side of the desk: API types, calls and formatting. No keys here.
 import type { Decision, Fill, Position, Settings, SkillId, Token } from "./rules";
+import { demo } from "./demo";
 
 export interface Note { id: string; text: string; at: number; status: "accepted" | "rejected"; reason: string }
 export interface Feed { status: "connecting" | "live" | "down" | "off"; lastAt: number; error: string }
@@ -25,7 +26,19 @@ async function call<T>(url: string, init?: RequestInit): Promise<T> {
   return j;
 }
 
-export const api = {
+// No server (e.g. GitHub Pages): the desk runs the same rules in the browser on simulated tokens.
+let useDemo: boolean | null = null;
+async function pick(): Promise<boolean> {
+  if (useDemo !== null) return useDemo;
+  try {
+    const r = await fetch("/api/state");
+    useDemo = !r.ok || !(r.headers.get("content-type") || "").includes("json");
+  } catch { useDemo = true; }
+  return useDemo;
+}
+export const isDemo = () => useDemo === true;
+
+const server = {
   state: () => call<DeskState>("/api/state"),
   settings: (patch: Partial<Settings> & { confirm?: string }) =>
     call<DeskState>("/api/settings", { method: "POST", body: JSON.stringify(patch) }),
@@ -36,6 +49,13 @@ export const api = {
     return { note: j.note, state: j.state };
   },
   close: (mint: string) => call<DeskState>("/api/close", { method: "POST", body: JSON.stringify({ mint }) }),
+};
+
+export const api = {
+  state: async () => ((await pick()) ? demo.state() : server.state()),
+  settings: async (patch: Partial<Settings> & { confirm?: string }) => ((await pick()) ? demo.settings(patch) : server.settings(patch)),
+  note: async (text: string) => ((await pick()) ? demo.note(text) : server.note(text)),
+  close: async (mint: string) => ((await pick()) ? demo.close(mint) : server.close(mint)),
 };
 
 /** Tiny SOL prices are shown in scientific form so they stay readable. */
