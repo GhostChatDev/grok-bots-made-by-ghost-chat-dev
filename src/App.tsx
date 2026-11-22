@@ -10,6 +10,7 @@ export default function App() {
   const [msg, setMsg] = useState("");
   const [confirm, setConfirm] = useState("");
   const [busy, setBusy] = useState(false);
+  const [tab, setTab] = useState<"desk" | "activity" | "controls">("desk");
 
   const load = useCallback(() => api.state().then((x) => { setS(x); setErr(""); }).catch((e: Error) => setErr(e.message)), []);
   useEffect(() => {
@@ -41,18 +42,25 @@ export default function App() {
           <span className={`badge ${s.settings.mode === "live" ? "danger" : ""}`}>{s.settings.mode === "live" ? "LIVE money" : "Paper"}</span>
         </div>
       </header>
+      <nav className="tabs" aria-label="Screens">
+        {(["desk", "activity", "controls"] as const).map((k) => (
+          <button key={k} className={tab === k ? "active" : ""} aria-current={tab === k ? "page" : undefined} onClick={() => setTab(k)}>
+            {k === "desk" ? "Desk" : k === "activity" ? "Activity" : "Controls"}
+          </button>
+        ))}
+      </nav>
       {err && <p className="banner error" role="alert">Connection lost: {err}. Showing the last data.</p>}
       {simulated && <p className="banner warn">Simulated prices: the live PumpPortal feed is quiet, so made-up tokens are shown. They are never traded live.</p>}
 
-      <section className="stats" aria-label="Today">
+      {tab === "desk" && <section className="stats" aria-label="Today">
         <div className="card stat"><span className="muted">P&L today</span><b className={stats.pnlSol >= 0 ? "up" : "down"}>{fmtSol(stats.pnlSol)}</b></div>
         <div className="card stat"><span className="muted">Fills today</span><b>{stats.count} / {s.limits.maxFillsPerDay}</b></div>
         <div className="card stat"><span className="muted">Open</span><b>{s.positions.length} / {s.limits.maxOpen}</b></div>
         <div className="card stat"><span className="muted">Loss cap</span><b>{fmtSol(s.limits.dailyLossCapSol, 2)}</b></div>
-      </section>
+      </section>}
 
       <div className="grid">
-        <section className="card" aria-label="Tokens">
+        {tab === "desk" && <section className="card" aria-label="Tokens">
           <h2>Tokens</h2>
           {s.tokens.length === 0 ? <p className="muted">Waiting for new tokens…</p> : (
             <ul className="list">
@@ -67,9 +75,9 @@ export default function App() {
               ))}
             </ul>
           )}
-        </section>
+        </section>}
 
-        <section className="card" aria-label="Token detail">
+        {tab === "desk" && <section className="card" aria-label="Token detail">
           {!token || !decision ? <p className="muted">Pick a token.</p> : (<>
             <h2>{token.symbol} <small className="muted">{token.name}</small></h2>
             <svg className="chart" viewBox="0 0 300 100" role="img" aria-label={`${token.symbol} recent price`}><polyline points={sparkPoints(token.history, 300, 100)} /></svg>
@@ -82,9 +90,9 @@ export default function App() {
             <p className={`verdict ${decision.action.toLowerCase()}`}><b>{decision.action}</b> — {decision.reason}</p>
             <ul className="votes">{decision.votes.map((v) => <li key={v.id}><span className={`tag ${v.vote.toLowerCase()}`}>{v.vote}</span> {v.id}: {v.reason}</li>)}</ul>
           </>)}
-        </section>
+        </section>}
 
-        <section className="card" aria-label="Journal">
+        {tab === "activity" && <section className="card" aria-label="Journal">
           <h2>Journal</h2>
           <form onSubmit={(e) => { e.preventDefault(); setBusy(true); api.note(note).then((r) => { setS(r.state); setNote(""); setMsg("Note saved"); }).catch((x: Error) => setMsg(x.message)).finally(() => setBusy(false)); }}>
             <label htmlFor="note">Note (explains, never orders a trade)</label>
@@ -92,9 +100,9 @@ export default function App() {
           </form>
           {msg && <p className="muted" aria-live="polite">{msg}</p>}
           {s.notes.length === 0 ? <p className="muted">No notes yet.</p> : <ul className="log">{s.notes.slice(0, 8).map((n) => <li key={n.id}><small className="muted">{fmtTime(n.at)}</small> {n.text}</li>)}</ul>}
-        </section>
+        </section>}
 
-        <section className="card" aria-label="Controls">
+        {tab === "controls" && <section className="card wide" aria-label="Controls">
           <h2>Controls</h2>
           <button className={s.settings.auto ? "" : "primary"} disabled={busy} onClick={() => run(() => api.settings({ auto: !s.settings.auto }))}>{s.settings.auto ? "Pause auto-trading" : "Resume auto-trading"}</button>
           <label htmlFor="size">Size per trade (max {s.limits.maxSizeSol} SOL)</label>
@@ -106,9 +114,9 @@ export default function App() {
           {!s.liveAllowed ? <p className="muted">Off on this server. It needs LIVE_TRADING=enabled and PUMPPORTAL_API_KEY set on the server.</p>
             : s.settings.mode === "live" ? <button className="danger" onClick={() => run(() => api.settings({ mode: "paper" }), "Back to paper")}>Back to paper</button>
             : <div className="inline"><input aria-label="Type LIVE to confirm" value={confirm} onChange={(e) => setConfirm(e.target.value)} placeholder="Type LIVE" /><button className="danger" disabled={confirm !== "LIVE"} onClick={() => run(() => api.settings({ mode: "live", confirm }), "Live trading on")}>Go live</button></div>}
-        </section>
+        </section>}
 
-        <section className="card wide" aria-label="Positions and fills">
+        {tab === "activity" && <section className="card wide" aria-label="Positions and fills">
           <h2>Positions</h2>
           {s.positions.length === 0 ? <p className="muted">No open positions.</p> : <ul className="log">{s.positions.map((p) => {
             const t = s.tokens.find((x) => x.mint === p.mint); const pnl = openPnl(p, t);
@@ -119,7 +127,7 @@ export default function App() {
             <div className="scroll"><table><thead><tr><th>Time</th><th>Token</th><th>Side</th><th>Size</th><th>P&L</th><th>Reason</th></tr></thead>
               <tbody>{s.fills.slice(-12).reverse().map((f) => <tr key={f.id}><td>{fmtTime(f.at)}</td><td>{f.symbol}</td><td>{f.side}</td><td className="num">{fmtSol(f.sizeSol, 3)}</td><td className={`num ${f.pnlSol >= 0 ? "up" : "down"}`}>{fmtSol(f.pnlSol)}</td><td>{f.reason}</td></tr>)}</tbody></table></div>
           )}
-        </section>
+        </section>}
       </div>
       <footer className="muted">Not financial advice. Memecoins can go to zero; paper-trade first.</footer>
     </div>
