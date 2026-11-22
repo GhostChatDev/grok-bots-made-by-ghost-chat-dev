@@ -62,6 +62,7 @@ export default function App() {
       <div className="grid">
         {tab === "desk" && <section className="card" aria-label="Tokens">
           <h2>Tokens</h2>
+          <p className="muted small">Tap a token to load its chart and verdict.</p>
           {s.tokens.length === 0 ? <p className="muted">Waiting for new tokens…</p> : (
             <ul className="list">
               {s.tokens.map((t) => (
