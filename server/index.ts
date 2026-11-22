@@ -128,8 +128,12 @@ async function tick() {
     for (const t of tokens.values()) {
       const d = decide(t, saved.positions, saved.fills, saved.settings, now);
       if (d.action === "HOLD") continue;
-      const isLive = saved.settings.mode === "live" && t.source === "pumpportal";
-      if (saved.settings.mode === "live" && !isLive) continue; // never trade simulated prices as live
+      // A sell follows the position's own mode: a paper position is never sold with real money.
+      const held = saved.positions.find((p) => p.mint === t.mint);
+      const isLive = d.action === "SELL"
+        ? held?.mode === "live"
+        : saved.settings.mode === "live" && t.source === "pumpportal";
+      if (d.action === "BUY" && saved.settings.mode === "live" && !isLive) continue; // never trade simulated prices as live
       let signature: string | undefined;
       if (isLive) {
         const r = await sendLive(d);

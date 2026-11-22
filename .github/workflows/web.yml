@@ -1,0 +1,27 @@
+name: Web App Build
+on:
+  push:
+  workflow_dispatch:
+# One run per commit (no second run for the pull request); a newer push cancels the older run.
+concurrency:
+  group: web-app-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install
+        run: |
+          if [ -f pnpm-lock.yaml ]; then npm i -g pnpm && pnpm install --frozen-lockfile
+          elif [ -f yarn.lock ]; then yarn install --frozen-lockfile
+          elif [ -f package-lock.json ]; then npm ci
+          else npm install; fi
+      - name: Build
+        run: npm run build
+      - name: Test
+        run: if npm run | grep -qE "^  test$"; then npm test; else echo "No test script yet."; fi

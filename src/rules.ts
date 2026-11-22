@@ -207,7 +207,7 @@ export function applyFill(
   const value = round(pos.qty * price);
   const fill: Fill = {
     id, mint: t.mint, symbol: t.symbol, side: "SELL", priceSol: price, qty: pos.qty,
-    sizeSol: value, pnlSol: round(value - pos.sizeSol), at: now, mode, reason: d.reason,
+    sizeSol: value, pnlSol: round(value - pos.sizeSol), at: now, mode: pos.mode, reason: d.reason,
   };
   return { fill, positions: positions.filter((p) => p.mint !== t.mint) };
 }
