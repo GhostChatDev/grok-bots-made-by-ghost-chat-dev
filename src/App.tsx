@@ -38,7 +38,7 @@ export default function App() {
       <header className="top">
         <div><h1>Ghost Pump Desk</h1><p className="muted">Pump.fun scout · skills vote · risk gate decides</p></div>
         <div className="badges">
-          <span className={`badge ${s.feed.status === "live" ? "ok" : "warn"}`}>Feed: {s.feed.status}</span>
+          <span className={`badge ${s.feed.status === "live" ? "ok" : "warn"}`}>Connection: {s.feed.status}</span>
           <span className={`badge ${s.settings.mode === "live" ? "danger" : ""}`}>{s.settings.mode === "live" ? "LIVE money" : "Paper"}</span>
         </div>
       </header>

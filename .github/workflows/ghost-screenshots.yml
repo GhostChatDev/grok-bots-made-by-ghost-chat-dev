@@ -186,8 +186,160 @@ jobs:
             exit 1
           fi
           echo "Installed $n database change file(s), each one on top of the earlier ones${total:+; rows in $filled of $total tables before the last one${skipped:+ (skipped: $skipped)}}; called $fntotal database function(s) once with empty input, undone: ok"
+      - name: Upgrade a database like the live one (the main branch's changes, then this commit's new ones)
+        run: |
+          if [ -z "$DATABASE_URL" ]; then echo "Upgrade check: no database in this app."; exit 0; fi
+          # What is already live: the main branch (on the main branch itself, the commit before this push).
+          main="${{ github.event.repository.default_branch }}"; before="${{ github.event.before }}"
+          old="$main"; [ "$GITHUB_REF_NAME" = "$main" ] && old="$before"
+          export BASE_DIR="$RUNNER_TEMP/ghost-base"; mkdir -p "$BASE_DIR"
+          if [ -n "$old" ] && [ "$old" != "0000000000000000000000000000000000000000" ] && git fetch -q --depth=1 origin "$old" 2>/dev/null; then
+            for x in supabase/migrations migrations db/migrations; do git archive FETCH_HEAD "$x" 2>/dev/null | tar -x -C "$BASE_DIR" 2>/dev/null || true; done
+          fi
+          docker exec ghost-db psql -q -U postgres -c "create database ghost_up" >/dev/null
+          export PSQL_UP="docker exec -i ghost-db psql -q -U postgres -d ghost_up -v ON_ERROR_STOP=1"
+          d=""
+          for x in supabase/migrations migrations db/migrations; do
+            if ls "$x"/*.sql >/dev/null 2>&1; then d="$x"; break; fi
+          done
+          if [ -z "$d" ] || [ -z "${PSQL_UP:-}" ]; then echo "Upgrade check: no .sql database changes to install."; exit 0; fi
+          base="${BASE_DIR:-/nonexistent}/$d"
+          if ! ls "$base"/*.sql >/dev/null 2>&1; then
+            echo "Upgrade check: the main branch has no database changes yet, so there is no older database to upgrade. Nothing was checked here (the first-install check above is the one that counts)."
+            exit 0
+          fi
+          bad=0
+          for b in $(ls "$base"/*.sql | sort); do
+            name="$(basename "$b")"
+            if [ ! -f "$d/$name" ]; then
+              echo "FAIL: $d/$name is on the main branch and this change deletes it. A database that already installed it still has what it made; the files no longer say so. Keep the file, and undo what it did in a new file."
+              echo "::error::$d/$name was deleted but is already installed on live databases"
+              bad=1
+            elif ! cmp -s "$b" "$d/$name"; then
+              echo "FAIL: $d/$name is already on the main branch and this change edits it. A database that already installed it will never get the edit (each file is installed once), so the live database and a new one end up different. Leave it as it is on main and put the change in a new file with the next number."
+              echo "::error file=$d/$name::edited after it was installed: put the change in a new file"
+              bad=1
+            fi
+          done
+          last="$(ls "$base"/*.sql | sort | tail -1 | xargs basename)"
+          new=""
+          for f in $(ls "$d"/*.sql | sort); do
+            name="$(basename "$f")"
+            [ -f "$base/$name" ] && continue
+            if [ "$(printf '%s\n%s\n' "$name" "$last" | sort | head -1)" = "$name" ]; then
+              echo "FAIL: the new file $d/$name comes before $last, which is already on the main branch. A new database runs it first; a live one already has $last and runs it after (or not at all). Give it a number after $last."
+              echo "::error file=$d/$name::numbered before $last, which is already installed"
+              bad=1
+            fi
+            new="$new $f"
+          done
+          [ $bad -eq 1 ] && exit 1
+          if [ -z "$new" ]; then echo "Upgrade check: no new database change files in this commit."; exit 0; fi
+          if [ "$d" = "supabase/migrations" ]; then
+            $PSQL_UP <<'GHOST_AUTH' >/dev/null
+          create schema if not exists auth;
+          create table if not exists auth.users (id uuid primary key, email text, raw_user_meta_data jsonb, created_at timestamptz default now());
+          create or replace function auth.uid() returns uuid language sql stable as $f$ select nullif(current_setting('request.jwt.claim.sub', true), '')::uuid $f$;
+          create or replace function auth.role() returns text language sql stable as $f$ select nullif(current_setting('request.jwt.claim.role', true), '') $f$;
+          create or replace function auth.jwt() returns jsonb language sql stable as $f$ select coalesce(nullif(current_setting('request.jwt.claims', true), ''), '{}')::jsonb $f$;
+          do $r$ begin create role anon nologin; exception when duplicate_object then null; end $r$;
+          do $r$ begin create role authenticated nologin; exception when duplicate_object then null; end $r$;
+          do $r$ begin create role service_role nologin bypassrls; exception when duplicate_object then null; end $r$;
+          GHOST_AUTH
+          fi
+          m=0
+          for b in $(ls "$base"/*.sql | sort); do
+            if ! out="$($PSQL_UP < "$b" 2>&1)"; then
+              echo "UPGRADE CHECK COULD NOT RUN: the main branch's own file $d/$(basename "$b") doesn't install, so there is no older database to upgrade: $(printf '%s' "$out" | grep -m1 -E 'ERROR' || printf '%s' "$out" | head -1). Nothing about this commit's changes was checked here."
+              exit 1
+            fi
+            m=$((m+1))
+          done
+          $PSQL_UP <<'GHOST_SEED' >/dev/null
+          create schema if not exists ghost_ci;
+          create or replace function ghost_ci.seed() returns text language plpgsql as $s$
+          declare t record; c record; cols text; vals text; v text; chk text; added int := 0; pass int; total int := 0; filled int := 0; empty text := '';
+          begin
+            for pass in 1..3 loop
+              for t in select n.nspname as sch, k.relname as tbl from pg_class k join pg_namespace n on n.oid = k.relnamespace
+                       where k.relkind = 'r' and n.nspname in ('public', 'auth') loop
+                execute format('select 1 from %I.%I limit 1', t.sch, t.tbl) into v;
+                continue when v is not null;
+                cols := ''; vals := '';
+                for c in select a.attname as col, a.attnum as num, format_type(a.atttypid, a.atttypmod) as typ, a.atttypid as tid,
+                           (select format('%I.%I', fn.nspname, fc.relname) || '|' || fa.attname
+                              from pg_constraint fk join pg_class fc on fc.oid = fk.confrelid join pg_namespace fn on fn.oid = fc.relnamespace
+                              join pg_attribute fa on fa.attrelid = fk.confrelid and fa.attnum = fk.confkey[1]
+                             where fk.conrelid = a.attrelid and fk.contype = 'f' and fk.conkey[1] = a.attnum limit 1) as ref
+                         from pg_attribute a
+                        where a.attrelid = format('%I.%I', t.sch, t.tbl)::regclass and a.attnum > 0 and not a.attisdropped
+                          and a.attnotnull and not a.atthasdef and a.attidentity = '' and a.attgenerated = '' loop
+                  -- The table's own rules for this column: a list of allowed values, or a lowest number.
+                  select string_agg(pg_get_constraintdef(k.oid), ' ') into chk from pg_constraint k
+                   where k.conrelid = format('%I.%I', t.sch, t.tbl)::regclass and k.contype = 'c' and c.num = any(k.conkey);
+                  if c.ref is not null then
+                    v := format('(select %I from %s limit 1)', split_part(c.ref, '|', 2), split_part(c.ref, '|', 1));
+                  elsif exists (select 1 from pg_enum where enumtypid = c.tid) then
+                    v := quote_literal((select enumlabel from pg_enum where enumtypid = c.tid order by enumsortorder limit 1)) || '::' || c.typ;
+                  elsif chk ~ '''' and (c.typ in ('text', 'character varying') or c.typ like 'character%') then
+                    v := quote_literal(substring(chk from '''([^'']*)'''));
+                  elsif chk ~ '>=? *[(]?-?[0-9]' and (c.typ in ('integer', 'bigint', 'smallint', 'real', 'double precision') or c.typ like 'numeric%') then
+                    v := substring(chk from '>=? *[(]?(-?[0-9]+)');
+                  elsif c.typ like '%[]' then v := '''{}''';
+                  elsif c.typ = 'uuid' then v := 'gen_random_uuid()';
+                  elsif c.typ in ('integer', 'bigint', 'smallint', 'numeric', 'real', 'double precision') or c.typ like 'numeric(%' then v := '1';
+                  elsif c.typ = 'boolean' then v := 'false';
+                  elsif c.typ like 'timestamp%' then v := 'now()';
+                  elsif c.typ = 'date' then v := 'current_date';
+                  elsif c.typ like 'time%' then v := '''12:00''';
+                  elsif c.typ = 'interval' then v := '''1 hour''';
+                  elsif c.typ in ('inet', 'cidr') then v := '''127.0.0.1''';
+                  elsif c.typ = 'bytea' then v := 'decode(''00'', ''hex'')';
+                  elsif c.typ in ('json', 'jsonb') then v := '''{}''';
+                  else v := quote_literal('ghost-seed');
+                  end if;
+                  cols := cols || case when cols = '' then '' else ', ' end || quote_ident(c.col);
+                  vals := vals || case when vals = '' then '' else ', ' end || v || '::' || c.typ;
+                end loop;
+                begin
+                  if cols = '' then execute format('insert into %I.%I default values', t.sch, t.tbl);
+                  else execute format('insert into %I.%I (%s) values (%s)', t.sch, t.tbl, cols, vals); end if;
+                  added := added + 1;
+                exception when others then null; -- a table it can't fill (a check rule it can't guess): skipped
+                end;
+              end loop;
+            end loop;
+            -- What it could and couldn't fill, said out loud: a table it skipped is often the one with the strict rule.
+            for t in select n.nspname as sch, k.relname as tbl from pg_class k join pg_namespace n on n.oid = k.relnamespace
+                     where k.relkind = 'r' and n.nspname = 'public' order by 2 loop
+              total := total + 1;
+              execute format('select 1 from %I.%I limit 1', t.sch, t.tbl) into v;
+              if v is not null then filled := filled + 1; else empty := empty || case when empty = '' then '' else ', ' end || t.tbl; end if;
+            end loop;
+            return filled || '|' || total || '|' || empty;
+          end $s$;
+          GHOST_SEED
+          if ! seeded="$(echo "select ghost_ci.seed();" | $PSQL_UP -tA 2>&1)"; then
+            echo "SEED FAILED: the upgrade check's own seeding step crashed (Ghost Code's check, not your database change): $(printf '%s' "$seeded" | grep -m1 ERROR)"
+            exit 1
+          fi
+          seeded="$(printf '%s' "$seeded" | tail -1)"
+          filled="${seeded%%|*}"; rest="${seeded#*|}"; total="${rest%%|*}"; skipped="${rest#*|}"
+          n=0
+          for f in $new; do
+            if ! out="$($PSQL_UP < "$f" 2>&1)"; then
+              msg="$(printf '%s' "$out" | grep -m1 -E 'ERROR' || printf '%s' "$out" | head -1)"
+              echo "FAIL: the database change $f doesn't install on a database like the live one (the $m file(s) already on the main branch, with rows in $filled of $total tables): $msg"
+              echo "::error file=$f::doesn't install on top of what is already live: $msg"
+              exit 1
+            fi
+            n=$((n+1))
+          done
+          echo "Upgrade check passed: $n new database change file(s) installed on top of the $m already on the main branch, with rows in $filled of $total tables${skipped:+ (could not fill: $skipped)}."
+
       - name: Install and build the app
         run: |
+          echo "GHOST_BUILD_START=$(date +%s)" >> "$GITHUB_ENV"
           if [ -f package.json ]; then
             if [ -f pnpm-lock.yaml ]; then npm i -g pnpm && pnpm install --frozen-lockfile
             elif [ -f yarn.lock ]; then yarn install --frozen-lockfile
@@ -320,6 +472,8 @@ jobs:
             } else {
               report.served = "npm start (" + url + ")";
               console.log("SERVER: npm start answered at " + url + " after " + (s.ms / 1000).toFixed(1) + "s");
+              report.commit = (process.env.GITHUB_SHA || "").slice(0, 7) || null;
+              console.log("PHOTOGRAPHED: " + (report.commit ? "commit " + report.commit + ", " : "") + "served by this commit's own npm start");
             }
           }
 
@@ -348,6 +502,26 @@ jobs:
             await finish();
           }
           report.served = path.relative(BASE, root) || ".";
+          // Which commit this is, and whether the page about to be photographed was built in THIS run. A green screenshot
+          // must be of this commit's build: an app with a build step whose built folder holds an older copy (one committed
+          // to the repository and not rebuilt) would be photographed and passed while the commit's own code never built.
+          // GHOST_BUILD_START: the moment before the build step (seconds), set by the check file.
+          report.commit = (process.env.GITHUB_SHA || "").slice(0, 7) || null;
+          {
+            const started = Number(process.env.GHOST_BUILD_START || 0);
+            const builds = Boolean(pkg && pkg.scripts && pkg.scripts.build);
+            const builtDir = ["dist", "build", "out"].includes(report.served);
+            if (builds && builtDir && started) {
+              const at = await stat(path.join(root, "index.html")).then((x) => x.mtimeMs / 1000, () => 0);
+              if (at && at < started - 2) {
+                report.error = report.served + "/index.html was not made by this commit's build: it is an older copy (the build step ran and did not write it). Photographing it would show old code as if it were this commit" + (report.commit ? " (" + report.commit + ")" : "") + ". Make the build write " + report.served + "/, and don't keep a built copy in the repository";
+                await finish();
+              }
+              report.built = "in this run";
+            } else if (builds && !builtDir) report.built = "not checked (the app has a build step, but the page opened is not in dist, build or out)";
+            else report.built = builds ? "not checked" : "no build step (the files are the app)";
+            console.log("PHOTOGRAPHED: " + (report.commit ? "commit " + report.commit + ", " : "") + "served from " + report.served + ", built: " + report.built);
+          }
 
           // A tiny static server, so the app runs from http:// like it will online (single-page apps fall back to index.html).
           server = http.createServer(async (req, res) => {
