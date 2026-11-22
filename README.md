@@ -26,6 +26,18 @@ Node 22 or newer.
 
 Discovery, Liquidity, Momentum, Order flow and Exit each vote on a token. A buy needs at least two votes **and** the risk gate: 0.05 SOL maximum per trade, 3 open positions, 20 trades a day, a 0.1 SOL daily loss cap, and a 60-second cooldown per token. Exits: +30%, -15%, or 10 minutes.
 
+## Put it online (paper mode first)
+
+The app has its own server (it holds the PumpPortal connection and saves your state), so it needs a host that runs Node servers. GitHub Pages can't run it. Example with Render:
+
+1. Go to render.com, then **New → Web Service**, and pick this repository.
+2. **Runtime:** Node. **Build command:** `npm ci && npm run build`. **Start command:** `npm start`.
+3. **Environment:** add `NODE_VERSION` = `22`. Leave `LIVE_TRADING` and `PUMPPORTAL_API_KEY` **unset**: the desk runs in paper mode only.
+4. Deploy, then open the address Render gives you. The server listens on the `PORT` that Render sets.
+5. To keep your notes and fills between deploys, add a persistent disk mounted at `/opt/render/project/src/data`. Without one, a free instance starts empty after a restart.
+
+Run it in paper mode for at least a week. Check that the daily loss cap and the trade limit stop trades the way you expect before you think about live mode.
+
 ## Live trading (off by default)
 
 The server never sends live orders unless both environment variables are set **and** you type `LIVE` in Controls:
