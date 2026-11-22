@@ -105,7 +105,7 @@ export default function App() {
           <button onClick={() => setTab("controls")}>Open controls</button>
         </section>}
 
-        {tab === "activity" && <section className="card" aria-label="Journal">
+        {tab === "activity" && <section className="card wide" aria-label="Journal">
           <h2>Journal</h2>
           <form onSubmit={(e) => { e.preventDefault(); setBusy(true); api.note(note).then((r) => { setS(r.state); setNote(""); setMsg("Note saved"); }).catch((x: Error) => setMsg(x.message)).finally(() => setBusy(false)); }}>
             <label htmlFor="note">Note (explains, never orders a trade)</label>
@@ -117,6 +117,7 @@ export default function App() {
 
         {tab === "controls" && <section className="card wide" aria-label="Controls">
           <h2>Controls</h2>
+          {msg && <p className="muted" role="status" aria-live="polite">{msg}</p>}
           <button className={s.settings.auto ? "" : "primary"} disabled={busy} onClick={() => run(() => api.settings({ auto: !s.settings.auto }))}>{s.settings.auto ? "Pause auto-trading" : "Resume auto-trading"}</button>
           <label htmlFor="size">Size per trade (max {s.limits.maxSizeSol} SOL)</label>
           <input id="size" type="number" step="0.005" min="0.001" max={s.limits.maxSizeSol} defaultValue={s.settings.sizeSol} onBlur={(e) => run(() => api.settings({ sizeSol: Number(e.target.value) }), "Size saved")} />
