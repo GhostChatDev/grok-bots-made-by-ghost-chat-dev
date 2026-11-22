@@ -66,10 +66,10 @@ export default function App() {
             <ul className="list">
               {s.tokens.map((t) => (
                 <li key={t.mint}>
-                  <button className={`row ${token?.mint === t.mint ? "active" : ""}`} aria-pressed={token?.mint === t.mint} onClick={() => setSel(t.mint)}>
+                  <button className={`row ${token?.mint === t.mint ? "active" : ""}`} aria-pressed={token?.mint === t.mint} aria-label={`${t.symbol}${t.source === "simulated" ? " (simulated)" : ""}, ${t.liquiditySol.toFixed(1)} SOL in curve`} onClick={() => setSel(t.mint)}>
                     <span><b>{t.symbol}</b> {t.source === "simulated" && <small className="tag">sim</small>}<br /><small className="muted">{fmtAgo(t.createdAt, s.now)}</small></span>
                     <svg width="64" height="24" aria-hidden="true"><polyline points={sparkPoints(t.history, 64, 24)} /></svg>
-                    <span className="num">{t.liquiditySol.toFixed(1)} SOL</span>
+                    <span className="num">{t.liquiditySol.toFixed(1)} SOL<br /><small className="muted">in curve</small></span>
                   </button>
                 </li>
               ))}
@@ -80,7 +80,8 @@ export default function App() {
         {tab === "desk" && <section className="card" aria-label="Token detail">
           {!token || !decision ? <p className="muted">Pick a token.</p> : (<>
             <h2>{token.symbol} <small className="muted">{token.name}</small></h2>
-            <svg className="chart" viewBox="0 0 300 100" role="img" aria-label={`${token.symbol} recent price`}><polyline points={sparkPoints(token.history, 300, 100)} /></svg>
+            {token.history.length < 2 ? <p className="chart empty muted">Price line appears after 2 updates.</p>
+              : <svg className="chart" viewBox="0 0 300 100" preserveAspectRatio="none" role="img" aria-label={`${token.symbol} recent price`}><polyline points={sparkPoints(token.history, 300, 100)} /></svg>}
             <dl className="kv">
               <dt>Price</dt><dd className="num">{fmtPrice(token.priceSol)} SOL</dd>
               <dt>Buys / sells</dt><dd className="num">{token.buys} / {token.sells}</dd>
@@ -90,6 +91,18 @@ export default function App() {
             <p className={`verdict ${decision.action.toLowerCase()}`}><b>{decision.action}</b> — {decision.reason}</p>
             <ul className="votes">{decision.votes.map((v) => <li key={v.id}><span className={`tag ${v.vote.toLowerCase()}`}>{v.vote}</span> {v.id}: {v.reason}</li>)}</ul>
           </>)}
+        </section>}
+
+        {tab === "desk" && <section className="card" aria-label="Risk gate">
+          <h2>Risk gate</h2>
+          <dl className="kv">
+            <dt>Mode</dt><dd>{s.settings.mode === "live" ? "Live" : "Paper"}</dd>
+            <dt>Auto-trading</dt><dd>{s.settings.auto ? "On" : "Paused"}</dd>
+            <dt>Size per trade</dt><dd className="num">{fmtSol(s.settings.sizeSol, 3)}</dd>
+            <dt>Skills on</dt><dd className="num">{Object.values(s.settings.skills).filter(Boolean).length} / {s.skills.length}</dd>
+          </dl>
+          <p className="muted">A buy needs two buy votes and no block. Loss cap and open-position limit stop new buys.</p>
+          <button onClick={() => setTab("controls")}>Open controls</button>
         </section>}
 
         {tab === "activity" && <section className="card" aria-label="Journal">
