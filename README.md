@@ -38,6 +38,16 @@ The key stays on the server and is never sent to the browser. Simulated prices a
 
 State (settings, positions, fills, notes) is saved to `data/state.json`.
 
+## Deploy to a host (paper mode first)
+
+It needs a host that runs a Node server (Render, Railway, Fly.io, a VPS). GitHub Pages can't run it.
+
+1. Create a Node web service from this repository (Node 22).
+2. Build command: `npm install && npm run build`. Start command: `npm start` (it builds `dist` first if it's missing, and listens on `PORT`).
+3. Leave `LIVE_TRADING` and `PUMPPORTAL_API_KEY` unset: the desk runs in paper mode.
+4. Add a persistent disk mounted at `data/` so the journal survives a redeploy.
+5. Only after a long paper run: set both variables in the host's secret settings, never in the code.
+
 ## Checks
 
 `.github/workflows/web.yml` builds and tests on every push. `.github/workflows/ghost-screenshots.yml` opens the app in a real browser at desktop, tablet and phone size, presses the buttons and checks that added data survives a refresh.
